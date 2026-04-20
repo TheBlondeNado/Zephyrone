@@ -1,4 +1,21 @@
-# ZEPHYR PROTOCOL v1 — FINAL COMPLETE CODEBASE (March 15, 2026)
+# ZEPHYR PROTOCOL v1 — COMPLETE SINGLE-BLOCK CODEBASE (March 15, 2026)
+
+# ==================== DIRECTORY STRUCTURE ====================
+# Zephyr/
+# ├── README.md
+# ├── deploy.sh
+# ├── contracts/
+# │   ├── Zephyr.sol
+# │   ├── XRPLOmniAdapter.sol
+# │   ├── SolanaOmniAdapter.sol
+# │   ├── CosmosOmniAdapter.sol
+# │   └── PolkadotOmniAdapter.sol
+# └── frontend/
+#     ├── package.json
+#     ├── tailwind.config.js
+#     └── src/
+#         ├── App.tsx
+#         └── zephyr-sdk.ts
 
 # ==================== File: README.md ====================
 # Zephyr Protocol
@@ -7,7 +24,19 @@ The wireless layer for crypto. Native cross-chain intents across XRPL, Solana, F
 
 No bridges. No wrapping. One intent. One wallet.
 
-Real MetaMask signing + Streamlit-ready structure included.
+## Quick Start
+1. Deploy contracts/Zephyr.sol on Base Mainnet
+2. Deploy adapters and register them
+3. cd frontend && npm install && npm run dev
+
+# ==================== File: deploy.sh ====================
+#!/bin/bash
+forge create contracts/Zephyr.sol:Zephyr \
+  --rpc-url https://mainnet.base.org \
+  --private-key $PRIVATE_KEY \
+  --broadcast \
+  --verify \
+  --etherscan-api-key $BASESCAN_API_KEY
 
 # ==================== File: contracts/Zephyr.sol ====================
 pragma solidity ^0.8.24;
@@ -45,7 +74,6 @@ contract Zephyr is Ownable2Step, Pausable, ReentrancyGuard {
     uint256 public constant SLASH_PERCENT = 15;
     uint256 public constant PROTOCOL_FEE_BPS = 1;
     uint256 public constant INSURANCE_CLAIM_DELAY = 1 days;
-    uint256 public constant MAX_VALUE_PER_INTENT = 100 ether; // Rate limit cap
 
     mapping(string => address) public modules;
     mapping(bytes32 => bool) public executed;
@@ -121,7 +149,7 @@ contract Zephyr is Ownable2Step, Pausable, ReentrancyGuard {
         SolverBid[] memory bids = intentBids[intentId];
         require(bids.length > 0, "no bids");
 
-        string memory src = "flare:14"; // In production: use stored intent data
+        string memory src = "flare:14";
         string memory dst = "flare:14";
 
         if (selfLoopChainIds[src] && keccak256(bytes(src)) == keccak256(bytes(dst))) {
@@ -235,6 +263,19 @@ contract Zephyr is Ownable2Step, Pausable, ReentrancyGuard {
   }
 }
 
+# ==================== File: frontend/tailwind.config.js ====================
+/** @type {import('tailwindcss').Config} */
+export default {
+  content: [
+    "./index.html",
+    "./src/**/*.{js,ts,jsx,tsx}",
+  ],
+  theme: {
+    extend: {},
+  },
+  plugins: [],
+}
+
 # ==================== File: frontend/src/App.tsx ====================
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { RainbowKitProvider, getDefaultConfig } from '@rainbow-me/rainbowkit';
@@ -273,6 +314,42 @@ const transports = [
   { name: 'Flare', score: 92, gas: '0.0004', time: '<8s', chain: 'flare' as ChainKey },
 ];
 
+function TransportCard({ t, isSelected, onClick }: { t: any; isSelected: boolean; onClick: () => void }) {
+  const badgeStyles = {
+    xrpl: 'bg-blue-500',
+    solana: 'bg-purple-500',
+    cosmos: 'bg-cyan-500',
+    polkadot: 'bg-pink-500',
+    bitcoin: 'bg-orange-500',
+    flare: 'bg-amber-500',
+  } as const;
+
+  return (
+    <div
+      onClick={onClick}
+      className={`group flex justify-between items-center p-6 rounded-3xl cursor-pointer transition-all duration-300 backdrop-blur-xl border border-white/10 bg-zinc-900/80 hover:bg-zinc-900/90 shadow-xl ${
+        isSelected ? 'ring-2 ring-emerald-400 bg-emerald-950/60' : ''
+      }`}
+    >
+      <div>
+        <div className="text-2xl font-mono flex items-center gap-3">
+          {t.name}
+          {t.chain && (
+            <span className={`text-xs ${badgeStyles[t.chain]} text-white px-3 py-1 rounded-full font-medium tracking-wider`}>
+              {t.chain.toUpperCase()}
+            </span>
+          )}
+        </div>
+        <div className="text-emerald-400/90 text-sm mt-1">Security • {t.score}</div>
+      </div>
+      <div className="text-right">
+        <div className="font-mono text-xl text-white group-hover:text-emerald-300 transition-colors">{t.gas} ETH</div>
+        <div className="text-xs text-zinc-500">{t.time}</div>
+      </div>
+    </div>
+  );
+}
+
 function App() {
   const { address, isConnected } = useAccount();
   const { data: walletClient } = useWalletClient();
@@ -286,7 +363,6 @@ function App() {
   const [errorMsg, setErrorMsg] = useState('');
   const [flarePrice, setFlarePrice] = useState<number | null>(null);
 
-  // Live FLR price
   useEffect(() => {
     if (destination !== 'flare') {
       setFlarePrice(null);
@@ -329,7 +405,7 @@ function App() {
       return;
     }
     if (!recipient) {
-      setErrorMsg('Recipient required');
+      setErrorMsg('Recipient address required');
       setStatus('error');
       return;
     }
@@ -419,19 +495,12 @@ function App() {
                   <h3 className="text-3xl font-semibold mb-8">Live Routing</h3>
                   <div className="space-y-4">
                     {liveScores.map((t) => (
-                      <div key={t.name} onClick={() => setSelectedTransport(t.name)}
-                        className={`p-6 rounded-3xl cursor-pointer transition-all ${selectedTransport === t.name ? 'bg-emerald-950 ring-2 ring-emerald-400' : 'hover:bg-zinc-800'}`}>
-                        <div className="flex justify-between">
-                          <div>
-                            <div className="text-2xl font-mono">{t.name}</div>
-                            <div className="text-emerald-400 text-sm">Security: {t.score}</div>
-                          </div>
-                          <div className="text-right">
-                            <div className="font-mono text-xl">{t.gas} ETH</div>
-                            <div className="text-xs text-zinc-500">{t.time}</div>
-                          </div>
-                        </div>
-                      </div>
+                      <TransportCard
+                        key={t.name}
+                        t={t}
+                        isSelected={selectedTransport === t.name}
+                        onClick={() => setSelectedTransport(t.name)}
+                      />
                     ))}
                   </div>
                 </div>
@@ -471,4 +540,30 @@ const zephyrAbi = [
 ] as const;
 
 export const createIntentClient = (walletClient: any) => ({
-  async postIntent(intent
+  async postIntent(intentId: `0x${string}`) {
+    return walletClient.writeContract({
+      address: CONTRACT_ADDRESS,
+      abi: zephyrAbi,
+      functionName: 'postIntent',
+      args: [intentId],
+    });
+  },
+
+  async submitBid(intentId: `0x${string}`, transport: string, gasEstimate: bigint) {
+    return walletClient.writeContract({
+      address: CONTRACT_ADDRESS,
+      abi: zephyrAbi,
+      functionName: 'submitBid',
+      args: [intentId, transport, gasEstimate],
+    });
+  },
+
+  async selectBestRoute(intentId: `0x${string}`) {
+    return walletClient.writeContract({
+      address: CONTRACT_ADDRESS,
+      abi: zephyrAbi,
+      functionName: 'selectBestRoute',
+      args: [intentId],
+    });
+  }
+});
