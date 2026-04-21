@@ -1,8 +1,9 @@
 import streamlit as st
+from web3 import Web3
 import requests
 import time
-from web3 import Web3
-from streamlit_wallet_connect import wallet_connect
+import json
+from streamlit_javascript import st_javascript
 
 st.set_page_config(page_title="Zephyr", page_icon="⚡", layout="centered")
 
@@ -22,14 +23,14 @@ contract = w3.eth.contract(address=ZEPHYR_ADDRESS, abi=ZEPHYR_ABI)
 
 if "account" not in st.session_state:
     st.session_state.account = None
-if "history" not in st.session_state:
-    st.session_state.history = []
+if "last_tx_data" not in st.session_state:
+    st.session_state.last_tx_data = None
 
 # ===================== UI =====================
 st.title("⚡ Zephyr")
 st.markdown("**The wireless layer for crypto.** Connecting the best specialized networks seamlessly — no bridges, no wrapping.")
 
-# Satellite Routing Table
+# Live Routing - Bright Red Bars
 st.subheader("Live Routing — Specialized Satellites")
 transports = [
     {"name": "Glacis", "score": 96, "gas": "0.0004", "time": "<9s"},
@@ -59,84 +60,84 @@ with col1:
 with col2:
     recipient = st.text_input("Recipient Address", placeholder="Enter address...")
 
-# Satellite-Specific Info
+# Flare Enhancements
 if destination == "Flare Network":
     st.subheader("Flare Live Oracle Data")
     try:
         flr_resp = requests.get("https://ftso.flare.network/api/v1/ftso/price/FLRUSD", timeout=5)
         flr_price = flr_resp.json().get("price")
-        if flr_price: st.success(f"FLR/USD: **${flr_price:.4f}**")
+        if flr_price:
+            st.success(f"FLR/USD: **${flr_price:.4f}**")
         fxrp_resp = requests.get("https://ftso.flare.network/api/v1/ftso/price/FXRPUSD", timeout=5)
         fxrp_price = fxrp_resp.json().get("price")
-        if fxrp_price: st.success(f"FXRP/USD: **${fxrp_price:.4f}**")
+        if fxrp_price:
+            st.success(f"FXRP/USD: **${fxrp_price:.4f}**")
     except:
         pass
-    st.info("💡 Local execution on Flare (fast & cheap)")
+    st.info("💡 Flare → Flare uses local execution (fast & cheap)")
 
-if destination == "Stellar":
-    st.info("🌟 Optimized for fast payments and stablecoins")
-if destination == "Sui":
-    st.info("⚡ Parallel execution satellite — ideal for high-volume intents")
+# Wallet Connection
+if st.button("🔗 Connect MetaMask", type="primary", use_container_width=True):
+    try:
+        account = st_javascript("""
+            if (window.ethereum) {
+                return window.ethereum.request({ method: 'eth_requestAccounts' }).then(accounts => accounts[0]);
+            } else {
+                return "No MetaMask";
+            }
+        """)
+        if account and account != "No MetaMask":
+            st.session_state.account = account
+            st.success(f"✅ Connected: {account[:6]}...{account[-4:]}")
+        else:
+            st.error("MetaMask not detected. Please open this in a browser with MetaMask installed.")
+    except Exception as e:
+        st.error(f"Connection error: {str(e)}")
 
-# Wallet & Full Intent Flow
-st.subheader("Wallet & Send Intent")
-
-connect_result = wallet_connect(label="connect", key="zephyr_connect", message="Connect MetaMask")
-
-if connect_result and connect_result.get("address"):
-    st.session_state.account = connect_result["address"]
-    st.success(f"✅ Connected: {st.session_state.account[:6]}...{st.session_state.account[-4:]}")
-
+# Full Intent Button
 if st.button("🚀 Send Full Intent Across Satellites", type="primary", use_container_width=True):
     if not st.session_state.get("account"):
         st.error("Please connect MetaMask first")
     elif not recipient:
         st.error("Please enter a recipient address")
     else:
-        with st.spinner("Routing through optimal satellite..."):
+        with st.spinner("Preparing full intent for MetaMask..."):
             try:
                 intent_id = w3.keccak(text=f"intent-{st.session_state.account}-{int(time.time())}")
                 transport = "Flare" if "Flare" in destination else "Glacis"
 
-                # Simplified full flow for demo
-                post_tx = contract.functions.postIntent(intent_id).build_transaction({
+                # Build postIntent transaction
+                tx = contract.functions.postIntent(intent_id).build_transaction({
                     'from': st.session_state.account,
                     'gas': 250000,
                     'nonce': w3.eth.get_transaction_count(st.session_state.account),
                     'chainId': 8453,
                 })
 
-                result = wallet_connect(
-                    label="send",
-                    key="zephyr_send",
-                    message="Sign Intent",
-                    contract_address=ZEPHYR_ADDRESS,
-                    data=post_tx['data'],
-                    value="0",
-                    gas=hex(post_tx['gas']),
-                    chain_id="0x2105"
-                )
+                tx_data = {
+                    "to": ZEPHYR_ADDRESS,
+                    "value": "0",
+                    "data": tx['data'],
+                    "gas": hex(tx['gas']),
+                    "gasPrice": hex(w3.eth.gas_price),
+                    "nonce": hex(tx['nonce']),
+                    "chainId": "0x2105"
+                }
 
-                if result and result.get("txHash"):
-                    st.success("🎉 Intent successfully routed!")
-                    st.balloons()
-                    st.markdown(f"[View on Basescan](https://basescan.org/tx/{result['txHash']})")
-                    
-                    # Add to history
-                    st.session_state.history.append({
-                        "time": time.strftime("%H:%M"),
-                        "destination": destination,
-                        "tx": result['txHash'][:8] + "..."
-                    })
-                else:
-                    st.error("Signing cancelled or failed")
+                st.session_state.last_tx_data = tx_data
+
+                st.success("✅ Transaction prepared for MetaMask!")
+                st.markdown("**Copy the JSON below and paste into MetaMask → Advanced → Custom Transaction**")
+                st.json(tx_data)
+
+                st.info("After signing in MetaMask, you can paste the transaction hash here to track it.")
+
             except Exception as e:
-                st.error(f"Error: {str(e)}")
+                st.error(f"Failed to prepare transaction: {str(e)}")
 
-# Intent History
-if st.session_state.history:
-    st.subheader("Recent Intents")
-    for item in reversed(st.session_state.history[-5:]):
-        st.markdown(f"**{item['time']}** → {item['destination']} • tx: `{item['tx']}`")
+# Show last prepared transaction
+if st.session_state.last_tx_data:
+    st.caption("Last prepared transaction (ready for MetaMask):")
+    st.json(st.session_state.last_tx_data)
 
-st.caption("Zephyr — The wireless mesh connecting specialized satellites: XRPL (settlement), Flare (oracles), Sui (speed), Stellar (payments), Chainlink/Pyth (data).")
+st.caption("Zephyr — Wireless mesh connecting specialized satellites. Real MetaMask connection via JS injection.")
